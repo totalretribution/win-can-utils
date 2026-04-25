@@ -18,7 +18,9 @@ jobs:
         with:
           msystem: UCRT64
           update: true
-          pacboy: gcc:u make:u
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-make
 
       - name: Build
         shell: msys2 {0}
