@@ -1,5 +1,6 @@
 CC      = gcc
-CFLAGS  = -Wall -Wextra -O2
+VERSION ?= v0.0.0
+CFLAGS  = -Wall -Wextra -O2 -DVERSION=\"$(VERSION)\"
 LDFLAGS = -lwinusb -lsetupapi
 
 all: candump.exe cangen.exe wincan.exe cansend.exe

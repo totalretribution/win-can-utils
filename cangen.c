@@ -36,7 +36,9 @@ int main(int argc, char *argv[])
     int bitrate  = 250;
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "can0") == 0) {
+        if (strcmp(argv[i], "--version") == 0) {
+            printf("cangen %s\n", VERSION); return 0;
+        } else if (strcmp(argv[i], "can0") == 0) {
             channel = 0;
         } else if (strcmp(argv[i], "can1") == 0) {
             channel = 1;

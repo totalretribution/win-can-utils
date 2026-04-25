@@ -126,6 +126,10 @@ static int parse_frame(const char *str, int channel, struct gs_host_frame *f)
 
 int main(int argc, char *argv[])
 {
+    if (argc == 2 && strcmp(argv[1], "--version") == 0) {
+        printf("cansend %s\n", VERSION); return 0;
+    }
+
     if (argc < 3) { usage(argv[0]); return 1; }
 
     int channel;

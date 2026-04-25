@@ -128,6 +128,10 @@ static void usage(const char *prog)
 
 int main(int argc, char *argv[])
 {
+    if (argc == 2 && strcmp(argv[1], "--version") == 0) {
+        printf("wincan %s\n", VERSION); return 0;
+    }
+
     if (argc < 2) { usage(argv[0]); return 1; }
 
     const char *cmd = argv[1];
