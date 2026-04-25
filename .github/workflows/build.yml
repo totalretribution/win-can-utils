@@ -28,11 +28,11 @@ jobs:
         shell: msys2 {0}
         run: mingw32-make VERSION=${{ github.ref_name }}
 
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path candump.exe,cangen.exe,cansend.exe,wincan.exe -DestinationPath win-can-utils-${{ github.ref_name }}.zip
+
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            candump.exe
-            cangen.exe
-            cansend.exe
-            wincan.exe
+          files: win-can-utils-${{ github.ref_name }}.zip
