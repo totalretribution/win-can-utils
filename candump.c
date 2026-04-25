@@ -41,8 +41,9 @@ static void print_frame(const struct gs_host_frame *f)
 
 static void usage(const char *prog)
 {
-    fprintf(stderr, "Usage: %s [can0 | can1 | both] [-b bitrate]\n"
+    fprintf(stderr, "Usage: %s [can0 | can1 | both] [-b bitrate] [-d index]\n"
                     "  -b bitrate   125, 250, 500, or 1000 kbps (default: 250)\n"
+                    "  -d index     USB device index when multiple adapters are connected (default: 0)\n"
                     "Default channel: both\n", prog);
 }
 
@@ -50,19 +51,22 @@ int main(int argc, char *argv[])
 {
     int dump0 = 1, dump1 = 1;
     int bitrate = 250;
+    int device  = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--version") == 0) {
             printf("candump %s\n", VERSION); return 0;
         } else if (strcmp(argv[i], "-b") == 0 && i+1 < argc) {
             bitrate = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "-d") == 0 && i+1 < argc) {
+            device = atoi(argv[++i]);
         } else if (strcmp(argv[i], "can0") == 0) { dump0=1; dump1=0; }
         else if  (strcmp(argv[i], "can1") == 0) { dump0=0; dump1=1; }
         else if  (strcmp(argv[i], "both") == 0) { dump0=1; dump1=1; }
         else { usage(argv[0]); return 1; }
     }
 
-    g_dev = wincan_open();
+    g_dev = wincan_open(device);
     if (!g_dev) return 1;
 
     if (dump0 && wincan_channel_init(g_dev, 0, bitrate) != 0) {

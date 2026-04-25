@@ -16,8 +16,12 @@ typedef struct {
     WINUSB_INTERFACE_HANDLE usb;
 } WINCAN_DEV;
 
-/* Open the first candleLight device found. Returns NULL on failure. */
-WINCAN_DEV *wincan_open(void);
+/* Return the number of candleLight devices currently connected. */
+int wincan_device_count(void);
+
+/* Open the Nth candleLight device (device_index 0 = first).
+   Returns NULL on failure. */
+WINCAN_DEV *wincan_open(int device_index);
 
 /* Close device and free handle. */
 void wincan_close(WINCAN_DEV *d);

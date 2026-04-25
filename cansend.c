@@ -9,13 +9,14 @@
 static void usage(const char *prog)
 {
     fprintf(stderr,
-        "Usage: %s <channel> <frame> [-b bitrate]\n"
+        "Usage: %s <channel> <frame> [-b bitrate] [-d index]\n"
         "\n"
         "  channel    can0 or can1\n"
         "  frame      <can_id>#<data>   standard or extended CAN frame\n"
         "             <can_id>#R        RTR frame\n"
         "             <can_id>#R<dlc>   RTR frame with explicit DLC (0-8)\n"
         "  -b bitrate 125, 250, 500, or 1000 kbps (default: 250)\n"
+        "  -d index   USB device index when multiple adapters are connected (default: 0)\n"
         "\n"
         "  can_id     up to 3 hex digits for 11-bit (SFF)\n"
         "             up to 8 hex digits for 29-bit (EFF, id > 0x7FF)\n"
@@ -137,11 +138,14 @@ int main(int argc, char *argv[])
     else if (strcmp(argv[1], "can1") == 0) channel = 1;
     else { usage(argv[0]); return 1; }
 
-    /* argv[2] is the frame; optional -b follows */
+    /* argv[2] is the frame; optional flags follow */
     int bitrate = 250;
+    int device  = 0;
     for (int i = 3; i < argc; i++) {
         if (strcmp(argv[i], "-b") == 0 && i+1 < argc)
             bitrate = atoi(argv[++i]);
+        else if (strcmp(argv[i], "-d") == 0 && i+1 < argc)
+            device = atoi(argv[++i]);
         else { usage(argv[0]); return 1; }
     }
 
@@ -149,7 +153,7 @@ int main(int argc, char *argv[])
     if (parse_frame(argv[2], channel, &f) != 0)
         return 1;
 
-    WINCAN_DEV *dev = wincan_open();
+    WINCAN_DEV *dev = wincan_open(device);
     if (!dev) return 1;
 
     if (wincan_channel_init(dev, channel, bitrate) != 0) {

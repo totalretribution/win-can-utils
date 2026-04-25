@@ -20,11 +20,12 @@ static BOOL WINAPI ctrl_handler(DWORD type)
 static void usage(const char *prog)
 {
     fprintf(stderr,
-        "Usage: %s [can0 | can1] [-n count] [-g gap_ms] [-b bitrate]\n"
+        "Usage: %s [can0 | can1] [-n count] [-g gap_ms] [-b bitrate] [-d index]\n"
         "  can0/can1    channel to transmit on (default: can0)\n"
         "  -n count     number of frames (default: infinite)\n"
         "  -g gap_ms    delay between frames in ms (default: 100)\n"
-        "  -b bitrate   125, 250, 500, or 1000 kbps (default: 250)\n",
+        "  -b bitrate   125, 250, 500, or 1000 kbps (default: 250)\n"
+        "  -d index     USB device index when multiple adapters are connected (default: 0)\n",
         prog);
 }
 
@@ -34,6 +35,7 @@ int main(int argc, char *argv[])
     long count   = -1;  /* -1 = infinite */
     DWORD gap_ms = 100;
     int bitrate  = 250;
+    int device   = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--version") == 0) {
@@ -48,12 +50,14 @@ int main(int argc, char *argv[])
             gap_ms = (DWORD)atol(argv[++i]);
         } else if (strcmp(argv[i], "-b") == 0 && i+1 < argc) {
             bitrate = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "-d") == 0 && i+1 < argc) {
+            device = atoi(argv[++i]);
         } else {
             usage(argv[0]); return 1;
         }
     }
 
-    g_dev = wincan_open();
+    g_dev = wincan_open(device);
     if (!g_dev) return 1;
 
     if (wincan_channel_init(g_dev, channel, bitrate) != 0) {

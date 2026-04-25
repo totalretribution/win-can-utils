@@ -113,11 +113,12 @@ static void usage(const char *prog)
 {
     fprintf(stderr,
         "Usage:\n"
-        "  %s dump [can0|can1|both] [-b bitrate]\n"
-        "  %s gen  [can0|can1] [-n count] [-g ms] [-b bitrate]\n"
-        "  %s both --dump [can0|can1|both] --gen [can0|can1] [-n count] [-g ms] [-b bitrate]\n"
+        "  %s dump [can0|can1|both] [-b bitrate] [-d index]\n"
+        "  %s gen  [can0|can1] [-n count] [-g ms] [-b bitrate] [-d index]\n"
+        "  %s both --dump [can0|can1|both] --gen [can0|can1] [-n count] [-g ms] [-b bitrate] [-d index]\n"
         "\n"
         "  -b bitrate   125, 250, 500, or 1000 kbps (default: 250)\n"
+        "  -d index     USB device index when multiple adapters are connected (default: 0)\n"
         "Defaults: --dump both  --gen can0  count=infinite  gap=100ms\n",
         prog, prog, prog);
 }
@@ -145,6 +146,7 @@ int main(int argc, char *argv[])
     DumpArgs da = { .ch0 = 1, .ch1 = 1 };
     GenArgs  ga = { .channel = 0, .count = -1, .gap_ms = 100 };
     int bitrate = 250;
+    int device  = 0;
 
     /* parse remaining args */
     for (int i = 2; i < argc; i++) {
@@ -175,13 +177,15 @@ int main(int argc, char *argv[])
             ga.gap_ms = (DWORD)atol(argv[++i]);
         } else if (strcmp(argv[i], "-b") == 0 && i+1 < argc) {
             bitrate = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "-d") == 0 && i+1 < argc) {
+            device = atoi(argv[++i]);
         } else {
             usage(argv[0]); return 1;
         }
     }
 
     /* open device */
-    g_dev = wincan_open();
+    g_dev = wincan_open(device);
     if (!g_dev) return 1;
 
     /* init channels */

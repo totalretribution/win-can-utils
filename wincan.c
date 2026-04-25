@@ -14,16 +14,18 @@ static const GUID WINUSB_GUID =
     { 0xDEE824EF, 0x729B, 0x4A0E,
       { 0x9C, 0x14, 0xB7, 0x11, 0x7D, 0x33, 0xA8, 0x17 } };
 
-static char *find_device_path(void)
+/* Return the device path of the Nth (0-based) candleLight device found.
+   Returns NULL if fewer than (device_index+1) devices are present. */
+static char *find_device_path(int device_index)
 {
     HDEVINFO dev_info;
     SP_DEVICE_INTERFACE_DATA iface_data;
     PSP_DEVICE_INTERFACE_DETAIL_DATA detail;
     DWORD required;
     char *path = NULL;
+    int found = 0;
     int idx;
 
-    /* Try by the well-known WinUSB GUID first */
     dev_info = SetupDiGetClassDevs(&WINUSB_GUID, NULL, NULL,
                                    DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
     if (dev_info == INVALID_HANDLE_VALUE)
@@ -48,12 +50,14 @@ static char *find_device_path(void)
             continue;
         }
 
-        /* Check for VID/PID in the device path string */
         if (strstr(detail->DevicePath, "vid_1d50") &&
             strstr(detail->DevicePath, "pid_606f")) {
-            path = _strdup(detail->DevicePath);
-            free(detail);
-            break;
+            if (found == device_index) {
+                path = _strdup(detail->DevicePath);
+                free(detail);
+                break;
+            }
+            found++;
         }
         free(detail);
     }
@@ -62,12 +66,54 @@ static char *find_device_path(void)
     return path;
 }
 
-WINCAN_DEV *wincan_open(void)
+/* Return the number of candleLight devices currently connected. */
+int wincan_device_count(void)
 {
-    char *path = find_device_path();
+    HDEVINFO dev_info;
+    SP_DEVICE_INTERFACE_DATA iface_data;
+    PSP_DEVICE_INTERFACE_DETAIL_DATA detail;
+    DWORD required;
+    int count = 0;
+    int idx;
+
+    dev_info = SetupDiGetClassDevs(&WINUSB_GUID, NULL, NULL,
+                                   DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+    if (dev_info == INVALID_HANDLE_VALUE) return 0;
+
+    iface_data.cbSize = sizeof(iface_data);
+    for (idx = 0; ; idx++) {
+        if (!SetupDiEnumDeviceInterfaces(dev_info, NULL, &WINUSB_GUID,
+                                         idx, &iface_data))
+            break;
+        SetupDiGetDeviceInterfaceDetail(dev_info, &iface_data,
+                                        NULL, 0, &required, NULL);
+        detail = malloc(required);
+        if (!detail) break;
+        detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA);
+        if (SetupDiGetDeviceInterfaceDetail(dev_info, &iface_data,
+                                             detail, required, NULL, NULL)) {
+            if (strstr(detail->DevicePath, "vid_1d50") &&
+                strstr(detail->DevicePath, "pid_606f"))
+                count++;
+        }
+        free(detail);
+    }
+    SetupDiDestroyDeviceInfoList(dev_info);
+    return count;
+}
+
+WINCAN_DEV *wincan_open(int device_index)
+{
+    char *path = find_device_path(device_index);
     if (!path) {
-        fprintf(stderr, "candleLight device (VID=1D50 PID=606F) not found.\n"
-                        "Ensure the device is plugged in and WinUSB is installed.\n");
+        int total = wincan_device_count();
+        if (total == 0)
+            fprintf(stderr, "candleLight device (VID=1D50 PID=606F) not found.\n"
+                            "Ensure the device is plugged in and WinUSB is installed.\n");
+        else
+            fprintf(stderr, "candleLight device index %d not found "
+                            "(%d device(s) connected, indices 0-%d).\n",
+                    device_index, total, total - 1);
         return NULL;
     }
 
