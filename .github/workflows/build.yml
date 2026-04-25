@@ -24,7 +24,7 @@ jobs:
 
       - name: Build
         shell: msys2 {0}
-        run: make VERSION=${{ github.ref_name }}
+        run: mingw32-make VERSION=${{ github.ref_name }}
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
