@@ -22,17 +22,39 @@ jobs:
           update: true
           install: >-
             mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-make
+
+      - name: Configure
+        shell: msys2 {0}
+        run: >
+          cmake -B build -G "MinGW Makefiles"
+          -DCMAKE_BUILD_TYPE=Release
+          -DWINCAN_BUILD_TOOLS=ON
+          -DWINCAN_VERSION=${{ github.ref_name }}
 
       - name: Build
         shell: msys2 {0}
-        run: mingw32-make VERSION=${{ github.ref_name }}
+        run: cmake --build build
 
-      - name: Package
+      - name: Package tools
         shell: pwsh
-        run: Compress-Archive -Path candump.exe,cangen.exe,cansend.exe,wincan.exe -DestinationPath win-can-utils-${{ github.ref_name }}.zip
+        run: >
+          Compress-Archive
+          -Path build/candump.exe,build/cangen.exe,build/cansend.exe,build/canboth.exe
+          -DestinationPath win-can-utils-${{ github.ref_name }}.zip
+
+      - name: Package library
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path wincan-lib/include/wincan | Out-Null
+          Copy-Item include/wincan/wincan.h wincan-lib/include/wincan/
+          Copy-Item build/libwincanlib.a    wincan-lib/
+          Compress-Archive -Path wincan-lib/* -DestinationPath wincan-lib-${{ github.ref_name }}.zip
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: win-can-utils-${{ github.ref_name }}.zip
+          files: |
+            win-can-utils-${{ github.ref_name }}.zip
+            wincan-lib-${{ github.ref_name }}.zip
