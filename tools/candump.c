@@ -78,8 +78,12 @@ int main(int argc, char *argv[])
         wincan_config_t cfg = {0};
         cfg.device_index = device; cfg.channel = 1; cfg.bitrate_kbps = bitrate;
         bus[n] = wincan_open(&cfg);
-        if (!bus[n]) { wincan_close(bus[0]); return 1; }
-        channels[n++] = 1;
+        if (!bus[n]) {
+            if (n == 0) return 1; /* can0 also failed, nothing to do */
+            fprintf(stderr, "candump: can1 not available, listening on can0 only\n");
+        } else {
+            channels[n++] = 1;
+        }
     }
 
     SetConsoleCtrlHandler(ctrl_handler, TRUE);
