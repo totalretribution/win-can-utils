@@ -1,10 +1,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <winsock2.h>
 #include <windows.h>
 #include <winusb.h>
 #include <setupapi.h>
 #include "wincan/wincan.h"
+#include "wincan/wincan_client.h"
+#include "wincan_internal.h"
 
 /* =========================================================================
  * gs_usb protocol definitions
@@ -76,32 +79,8 @@ static const GUID WINUSB_GUID =
       { 0x9C, 0x14, 0xB7, 0x11, 0x7D, 0x33, 0xA8, 0x17 } };
 
 /* =========================================================================
- * Forward declaration
- * ====================================================================== */
-
-struct wincan_bus;
-
-/* =========================================================================
  * Shared device registry
- *
- * WinUSB only allows one CreateFile handle per device per process.
- * Multiple wincan_bus_t instances on the same physical device share a
- * single USB handle and a single RX dispatch thread, reference-counted here.
  * ====================================================================== */
-
-#define DEV_SLOTS 8
-
-typedef struct {
-    char                    path[512];
-    HANDLE                  dev;
-    WINUSB_INTERFACE_HANDLE usb;
-    int                     refs;
-    /* Per-device RX dispatch (one thread reads all frames, routes by channel) */
-    struct wincan_bus      *ch_bus[2];   /* active bus per CAN channel       */
-    volatile int            rx_running;
-    HANDLE                  rx_thread;
-    CRITICAL_SECTION        rx_lock;    /* protects ch_bus[]                 */
-} dev_slot_t;
 
 static dev_slot_t        g_devs[DEV_SLOTS];
 static CRITICAL_SECTION  g_dev_lock;
@@ -115,9 +94,6 @@ static BOOL WINAPI dev_lock_init(PINIT_ONCE io, PVOID p, PVOID *ctx)
     return TRUE;
 }
 
-/* Send HOST_FORMAT once per physical device immediately after USB init.
-   The Linux gs_usb driver sends this on probe; some firmware variants require
-   it before they will activate the CAN controller in non-silent mode. */
 static void slot_send_host_format(WINUSB_INTERFACE_HANDLE usb)
 {
     WINUSB_SETUP_PACKET pkt = {
@@ -170,8 +146,10 @@ static dev_slot_t *dev_acquire(const char *path)
             g_devs[i].refs       = 1;
             g_devs[i].ch_bus[0]  = NULL;
             g_devs[i].ch_bus[1]  = NULL;
-            g_devs[i].rx_running = 0;
-            g_devs[i].rx_thread  = NULL;
+            g_devs[i].rx_running  = 0;
+            g_devs[i].rx_thread   = NULL;
+            g_devs[i].device_lost = 0;
+            g_devs[i].rx_event    = CreateEvent(NULL, TRUE, FALSE, NULL);
             InitializeCriticalSection(&g_devs[i].rx_lock);
             LeaveCriticalSection(&g_dev_lock);
             return &g_devs[i];
@@ -191,6 +169,7 @@ static void dev_release(dev_slot_t *slot)
     if (--slot->refs == 0) {
         WinUsb_Free(slot->usb);
         CloseHandle(slot->dev);
+        if (slot->rx_event) { CloseHandle(slot->rx_event); slot->rx_event = NULL; }
         DeleteCriticalSection(&slot->rx_lock);
         slot->path[0] = '\0';
     }
@@ -198,40 +177,9 @@ static void dev_release(dev_slot_t *slot)
 }
 
 /* =========================================================================
- * Internal types
- * ====================================================================== */
-
-typedef struct {
-    wincan_frame_t  *frames;
-    int              capacity;
-    int              head, tail, count;  /* protected by lock */
-    uint32_t         overflows;          /* protected by lock */
-    CRITICAL_SECTION lock;
-    HANDLE           not_empty; /* auto-reset event */
-} rx_ring_t;
-
-struct wincan_bus {
-    /* USB handles */
-    dev_slot_t             *slot;
-    HANDLE                  dev;
-    WINUSB_INTERFACE_HANDLE usb;
-    int                     channel;
-
-    /* Filters */
-    wincan_filter_t        *filters;
-    int                     filter_count;
-    CRITICAL_SECTION        filter_lock;
-
-    /* Receive ring (always active) */
-    rx_ring_t               ring;
-};
-
-/* =========================================================================
  * USB helpers
  * ====================================================================== */
 
-/* Return the device path of the Nth matching device (0-based).
-   Returns NULL if fewer than (device_index+1) devices are present. */
 static char *find_device_path(int device_index)
 {
     HDEVINFO dev_info;
@@ -307,7 +255,7 @@ static int ctrl_out(wincan_bus_t *b, uint8_t req, uint16_t val,
                     void *data, uint16_t len)
 {
     WINUSB_SETUP_PACKET pkt = {
-        .RequestType = 0x41, /* vendor | interface | host->device */
+        .RequestType = 0x41,
         .Request = req, .Value = val, .Index = 0, .Length = len
     };
     ULONG t;
@@ -318,7 +266,7 @@ static int ctrl_in(wincan_bus_t *b, uint8_t req, uint16_t val,
                    void *data, uint16_t len)
 {
     WINUSB_SETUP_PACKET pkt = {
-        .RequestType = 0xC1, /* vendor | interface | device->host */
+        .RequestType = 0xC1,
         .Request = req, .Value = val, .Index = 0, .Length = len
     };
     ULONG t = 0;
@@ -326,10 +274,10 @@ static int ctrl_in(wincan_bus_t *b, uint8_t req, uint16_t val,
 }
 
 /* =========================================================================
- * Ring buffer
+ * Ring buffer (shared by USB and net backends)
  * ====================================================================== */
 
-static int ring_init(rx_ring_t *r, int cap)
+int ring_init(rx_ring_t *r, int cap)
 {
     r->frames = malloc(sizeof(wincan_frame_t) * cap);
     if (!r->frames) return WINCAN_ERR_NOMEM;
@@ -337,12 +285,12 @@ static int ring_init(rx_ring_t *r, int cap)
     r->head = r->tail = r->count = 0;
     r->overflows = 0;
     InitializeCriticalSection(&r->lock);
-    r->not_empty = CreateEvent(NULL, FALSE, FALSE, NULL); /* auto-reset */
+    r->not_empty = CreateEvent(NULL, FALSE, FALSE, NULL);
     if (!r->not_empty) { free(r->frames); r->frames = NULL; return WINCAN_ERR_IO; }
     return WINCAN_OK;
 }
 
-static void ring_destroy(rx_ring_t *r)
+void ring_destroy(rx_ring_t *r)
 {
     if (!r->capacity) return;
     free(r->frames); r->frames = NULL;
@@ -351,7 +299,7 @@ static void ring_destroy(rx_ring_t *r)
     r->capacity = 0;
 }
 
-static void ring_push(rx_ring_t *r, const wincan_frame_t *f)
+void ring_push(rx_ring_t *r, const wincan_frame_t *f)
 {
     EnterCriticalSection(&r->lock);
     if (r->count < r->capacity) {
@@ -365,7 +313,7 @@ static void ring_push(rx_ring_t *r, const wincan_frame_t *f)
     LeaveCriticalSection(&r->lock);
 }
 
-static int ring_pop(rx_ring_t *r, wincan_frame_t *f, uint32_t timeout_ms)
+int ring_pop(rx_ring_t *r, wincan_frame_t *f, uint32_t timeout_ms)
 {
     DWORD w = (timeout_ms == UINT32_MAX) ? INFINITE : (DWORD)timeout_ms;
     if (WaitForSingleObject(r->not_empty, w) == WAIT_TIMEOUT)
@@ -387,12 +335,12 @@ static int ring_pop(rx_ring_t *r, wincan_frame_t *f, uint32_t timeout_ms)
  * Filter matching
  * ====================================================================== */
 
-static int frame_passes_filters(wincan_bus_t *b, const wincan_frame_t *f)
+int frame_passes_filters(wincan_bus_t *b, const wincan_frame_t *f)
 {
     EnterCriticalSection(&b->filter_lock);
     if (b->filter_count == 0) {
         LeaveCriticalSection(&b->filter_lock);
-        return 1; /* no filters = accept all */
+        return 1;
     }
     for (int i = 0; i < b->filter_count; i++) {
         const wincan_filter_t *fl = &b->filters[i];
@@ -435,26 +383,41 @@ static void frame_to_gs(const wincan_frame_t *f, int channel,
 
 /* =========================================================================
  * Per-device RX dispatch thread
- *
- * One thread per physical USB device reads all frames from GS_EP_IN and
- * routes each to the correct channel's ring buffer.  This avoids the race
- * where two per-channel threads steal each other's frames from a shared
- * endpoint, and ensures the USB pipe is always drained so the device can
- * continue ACK-ing frames on the CAN bus.
  * ====================================================================== */
 
-static int raw_recv(WINUSB_INTERFACE_HANDLE usb, gs_frame_t *g)
+/* Returns: 1=frame received, 0=no data (timeout), -1=device removed/error.
+   Uses overlapped I/O so the read can be cancelled and never hangs. */
+static int raw_recv(dev_slot_t *slot, gs_frame_t *g)
 {
+    OVERLAPPED ov;
+    memset(&ov, 0, sizeof(ov));
+    ov.hEvent = slot->rx_event;
+    ResetEvent(ov.hEvent);
+
     ULONG transferred = 0;
-    if (!WinUsb_ReadPipe(usb, GS_EP_IN,
-                         (PUCHAR)g, sizeof(*g), &transferred, NULL)) {
-        /* Only reset the pipe on a real error, not a timeout.
-           Resetting on timeout flushes frames that are already buffered. */
-        if (GetLastError() != ERROR_SEM_TIMEOUT)
-            WinUsb_ResetPipe(usb, GS_EP_IN);
-        return 0;
+    BOOL ok = WinUsb_ReadPipe(slot->usb, GS_EP_IN,
+                               (PUCHAR)g, sizeof(*g), &transferred, &ov);
+    if (!ok) {
+        DWORD err = GetLastError();
+        if (err != ERROR_IO_PENDING)
+            return -1; /* immediate failure — device gone */
+
+        /* Wait up to 150 ms for data */
+        int timed_out = (WaitForSingleObject(ov.hEvent, 150) == WAIT_TIMEOUT);
+        if (timed_out) {
+            WinUsb_AbortPipe(slot->usb, GS_EP_IN);
+            WaitForSingleObject(ov.hEvent, 2000);
+        }
+
+        if (!WinUsb_GetOverlappedResult(slot->usb, &ov, &transferred, FALSE)) {
+            DWORD err2 = GetLastError();
+            /* OPERATION_ABORTED = we cancelled it ourselves (timeout) */
+            if (timed_out && err2 == ERROR_OPERATION_ABORTED) return 0;
+            return -1; /* any other error = device gone */
+        }
     }
-    return transferred == sizeof(*g) ? 1 : 0;
+
+    return (int)transferred == (int)sizeof(*g) ? 1 : 0;
 }
 
 static DWORD WINAPI slot_rx_thread(LPVOID param)
@@ -462,15 +425,24 @@ static DWORD WINAPI slot_rx_thread(LPVOID param)
     dev_slot_t *slot = (dev_slot_t *)param;
     gs_frame_t g;
     wincan_frame_t f;
-
-    /* Set pipe timeout once for this slot's lifetime */
-    ULONG v = 100;
-    WinUsb_SetPipePolicy(slot->usb, GS_EP_IN,
-                         PIPE_TRANSFER_TIMEOUT, sizeof(v), &v);
+    int err_count = 0;
 
     while (slot->rx_running) {
-        if (!raw_recv(slot->usb, &g)) continue;
-        if (g.echo_id != GS_ECHO_RX) continue; /* skip TX echoes */
+        int r = raw_recv(slot, &g);
+        if (r == 0) { err_count = 0; continue; }
+        if (r < 0) {
+            /* Require 3 consecutive errors — filters transient USB errors on
+               reconnect / CAN error frames that briefly look like USB failures. */
+            if (++err_count >= 3) {
+                slot->device_lost = 1;
+                break;
+            }
+            Sleep(100);
+            continue;
+        }
+        err_count = 0;
+
+        if (g.echo_id != GS_ECHO_RX) continue;
 
         int ch = (int)(uint8_t)g.channel;
         if (ch > 1) continue;
@@ -484,23 +456,22 @@ static DWORD WINAPI slot_rx_thread(LPVOID param)
         }
         LeaveCriticalSection(&slot->rx_lock);
     }
+
+    slot->rx_running = 0;
     return 0;
 }
 
 /* =========================================================================
- * Public API
+ * Public API — wincan_open
  * ====================================================================== */
 
 wincan_bus_t *wincan_open(const wincan_config_t *cfg)
 {
     if (!cfg || cfg->channel < 0 || cfg->channel > 1) return NULL;
 
-    /* Bittiming is computed later, after the USB handle is open so we can
-       query the device's actual CAN clock frequency. */
     gs_bittiming_t bt;
     memset(&bt, 0, sizeof(bt));
 
-    /* Find and open (or reuse) USB device */
     char *path = find_device_path(cfg->device_index);
     if (!path) {
         int total = wincan_device_count();
@@ -518,15 +489,14 @@ wincan_bus_t *wincan_open(const wincan_config_t *cfg)
 
     wincan_bus_t *b = calloc(1, sizeof(*b));
     if (!b) { dev_release(slot); return NULL; }
+    b->backend = BACKEND_USB;
     b->slot    = slot;
     b->dev     = slot->dev;
     b->usb     = slot->usb;
     b->channel = cfg->channel;
+    b->net_sock = INVALID_SOCKET;
     InitializeCriticalSection(&b->filter_lock);
 
-    /* Validate channel index against device capability.
-       Single-channel devices (icount=0) silently accept channel=1 commands on
-       some firmware but behave unexpectedly (double-open, wrong mode, etc.). */
     {
         gs_device_config_t dcfg;
         if (ctrl_in(b, GS_BREQ_DEVICE_CFG, 1,
@@ -540,11 +510,9 @@ wincan_bus_t *wincan_open(const wincan_config_t *cfg)
         }
     }
 
-    /* Query device CAN clock so we compute the correct BRP.
-       SocketCAN does the same; hardcoding 48 MHz breaks non-48 MHz devices. */
     if (cfg->bitrate_kbps != 0) {
         gs_bt_const_t btc;
-        uint32_t fclk = 48000000u; /* safe fallback if firmware is too old */
+        uint32_t fclk = 48000000u;
         if (ctrl_in(b, GS_BREQ_BT_CONST, (uint16_t)cfg->channel,
                     &btc, sizeof(btc)) == 0 && btc.fclk_can > 0)
             fclk = btc.fclk_can;
@@ -569,20 +537,16 @@ wincan_bus_t *wincan_open(const wincan_config_t *cfg)
         bt.brp        = cfg->timing.brp;
     }
 
-    /* Reset channel first — clears bus-off and any leftover state from
-       a previous session that would prevent the device from ACK-ing */
     gs_mode_t reset_mode = { GS_MODE_RESET, 0 };
     ctrl_out(b, GS_BREQ_MODE, (uint16_t)cfg->channel,
              &reset_mode, sizeof(reset_mode));
 
-    /* Send bit timing */
     if (ctrl_out(b, GS_BREQ_BITTIMING, (uint16_t)cfg->channel,
                  &bt, sizeof(bt)) != 0) {
         fprintf(stderr, "wincan: BITTIMING failed: %lu\n", GetLastError());
         goto fail;
     }
 
-    /* Start channel */
     uint32_t features = 0;
     if (cfg->listen_only) features |= GS_FEATURE_LISTEN_ONLY;
     if (cfg->loopback)    features |= GS_FEATURE_LOOP_BACK;
@@ -593,9 +557,6 @@ wincan_bus_t *wincan_open(const wincan_config_t *cfg)
         goto fail;
     }
 
-    /* Always allocate a ring buffer.  The background thread must drain the
-       USB pipe continuously — if the host stops reading, the device firmware
-       fills its TX FIFO and stops ACK-ing frames on the CAN bus. */
     {
         int cap = cfg->rx_buffer_size > 0 ? cfg->rx_buffer_size
                                           : WINCAN_DEFAULT_RX_BUFFER;
@@ -615,7 +576,6 @@ wincan_bus_t *wincan_open(const wincan_config_t *cfg)
         }
     }
 
-    /* Register bus and start the per-device RX thread if not already running */
     EnterCriticalSection(&slot->rx_lock);
     slot->ch_bus[cfg->channel] = b;
     int need_thread = !slot->rx_running;
@@ -641,10 +601,38 @@ fail:
     return NULL;
 }
 
+/* =========================================================================
+ * Public API — wincan_open_ex (extended open with backend selection)
+ * ====================================================================== */
+
+wincan_bus_t *wincan_open_ex(const wincan_config_ex_t *cfg)
+{
+    if (!cfg) return NULL;
+
+    if (cfg->use_server) {
+        return wincan_net_open((uint8_t)cfg->channel,
+                               (uint32_t)cfg->bitrate_kbps,
+                               (uint32_t)cfg->rx_buffer_size);
+    }
+
+    wincan_config_t base = {0};
+    base.channel        = cfg->channel;
+    base.bitrate_kbps   = cfg->bitrate_kbps;
+    base.rx_buffer_size = (int)cfg->rx_buffer_size;
+    return wincan_open(&base);
+}
+
+/* =========================================================================
+ * Public API — wincan_send / wincan_recv / wincan_set_filters / etc.
+ * ====================================================================== */
+
 int wincan_send(wincan_bus_t *bus, const wincan_frame_t *frame,
                 uint32_t timeout_ms)
 {
     if (!bus || !frame) return WINCAN_ERR_PARAM;
+
+    if (bus->backend == BACKEND_NET)
+        return wincan_net_send(bus, frame, timeout_ms);
 
     static volatile uint32_t echo_seq = 1;
     gs_frame_t g;
@@ -664,6 +652,8 @@ int wincan_send(wincan_bus_t *bus, const wincan_frame_t *frame,
 int wincan_recv(wincan_bus_t *bus, wincan_frame_t *frame, uint32_t timeout_ms)
 {
     if (!bus || !frame) return WINCAN_ERR_PARAM;
+    if (bus->backend == BACKEND_USB && bus->slot && bus->slot->device_lost)
+        return WINCAN_ERR_IO;
     return ring_pop(&bus->ring, frame, timeout_ms);
 }
 
@@ -671,6 +661,9 @@ int wincan_set_filters(wincan_bus_t *bus,
                        const wincan_filter_t *filters, int count)
 {
     if (!bus) return WINCAN_ERR_PARAM;
+
+    if (bus->backend == BACKEND_NET)
+        return wincan_net_set_filters(bus, filters, count);
 
     wincan_filter_t *copy = NULL;
     if (filters && count > 0) {
@@ -690,6 +683,10 @@ int wincan_set_filters(wincan_bus_t *bus,
 int wincan_get_status(wincan_bus_t *bus, wincan_status_t *status)
 {
     if (!bus || !status) return WINCAN_ERR_PARAM;
+
+    if (bus->backend == BACKEND_NET)
+        return WINCAN_ERR_IO; /* not implemented for net backend */
+
     memset(status, 0, sizeof(*status));
 
     gs_state_t gs;
@@ -713,10 +710,13 @@ void wincan_close(wincan_bus_t *bus)
 {
     if (!bus) return;
 
+    if (bus->backend == BACKEND_NET) {
+        wincan_net_close(bus);
+        return;
+    }
+
     dev_slot_t *slot = bus->slot;
 
-    /* Unregister from the per-device dispatch; stop the thread if this was
-       the last bus on the device */
     if (slot) {
         EnterCriticalSection(&slot->rx_lock);
         if (slot->ch_bus[bus->channel] == bus)
@@ -732,7 +732,6 @@ void wincan_close(wincan_bus_t *bus)
         }
     }
 
-    /* Reset channel */
     gs_mode_t mode = { GS_MODE_RESET, 0 };
     ctrl_out(bus, GS_BREQ_MODE, (uint16_t)bus->channel, &mode, sizeof(mode));
 

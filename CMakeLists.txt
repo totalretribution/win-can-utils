@@ -23,6 +23,29 @@ add_library(wincan::wincan ALIAS wincanlib)
 # -------------------------------------------------------------------------
 option(WINCAN_BUILD_TOOLS    "Build CLI utilities (candump, cangen, cansend, wincan)" OFF)
 option(WINCAN_BUILD_EXAMPLES "Build examples" OFF)
+option(WINCAN_BUILD_NET      "Build network client backend" ON)
+option(WINCAN_BUILD_SERVER   "Build wincan_server daemon" ON)
+
+if(WINCAN_BUILD_NET)
+    target_sources(wincanlib PRIVATE src/wincan_proto.c src/wincan_net.c)
+    target_link_libraries(wincanlib PUBLIC ws2_32)
+endif()
+
+if(WINCAN_BUILD_SERVER)
+    add_executable(wincan_server
+        tools/wincan_server.c
+        src/wincan_server.c
+    )
+    target_include_directories(wincan_server PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+    target_link_libraries(wincan_server PRIVATE wincanlib ws2_32)
+    target_compile_definitions(wincan_server PRIVATE VERSION="${WINCAN_VERSION}")
+    target_compile_options(wincan_server PRIVATE -Wall -Wextra)
+    set_target_properties(wincan_server PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+    )
+endif()
 
 # Version string passed to tool executables (e.g. -DWINCAN_VERSION=v1.2.3)
 if(NOT DEFINED WINCAN_VERSION)
