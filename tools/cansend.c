@@ -4,11 +4,12 @@
 #include <ctype.h>
 #include <windows.h>
 #include <wincan/wincan.h>
+#include "common.h"
 
 static void usage(const char *prog)
 {
     fprintf(stderr,
-        "Usage: %s <channel> <frame> [-b bitrate] [-d index]\n"
+        "Usage: %s <channel> <frame> [-b bitrate] [-d index] [--server]\n"
         "\n"
         "  channel    can0 or can1\n"
         "  frame      <can_id>#<data>   standard or extended CAN frame\n"
@@ -16,6 +17,7 @@ static void usage(const char *prog)
         "             <can_id>#R<dlc>   RTR frame with explicit DLC (0-8)\n"
         "  -b bitrate 125, 250, 500, or 1000 kbps (default: 250)\n"
         "  -d index   device index for multiple adapters (default: 0)\n"
+        "  --usb      connect directly to USB device (default: use server)\n"
         "\n"
         "  can_id     up to 3 hex digits for 11-bit (SFF)\n"
         "             up to 8 hex digits for 29-bit (EFF, id > 0x7FF)\n"
@@ -114,19 +116,22 @@ int main(int argc, char *argv[])
     else if (strcmp(argv[1], "can1") == 0) channel = 1;
     else { usage(argv[0]); return 1; }
 
-    int bitrate = 250, device = 0;
+    int bitrate = 250, device = 0, use_server = 1;
     for (int i = 3; i < argc; i++) {
-        if      (strcmp(argv[i], "-b") == 0 && i+1 < argc) bitrate = atoi(argv[++i]);
-        else if (strcmp(argv[i], "-d") == 0 && i+1 < argc) device  = atoi(argv[++i]);
+        if      (strcmp(argv[i], "-b") == 0 && i+1 < argc) bitrate    = atoi(argv[++i]);
+        else if (strcmp(argv[i], "-d") == 0 && i+1 < argc) device     = atoi(argv[++i]);
+        else if (strcmp(argv[i], "--usb") == 0)             use_server = 0;
         else { usage(argv[0]); return 1; }
     }
 
     wincan_frame_t f;
     if (parse_frame(argv[2], &f) != 0) return 1;
 
-    wincan_config_t cfg = {0};
-    cfg.device_index = device; cfg.channel = channel; cfg.bitrate_kbps = bitrate;
-    wincan_bus_t *bus = wincan_open(&cfg);
+    wincan_config_ex_t cfg = {0};
+    cfg.channel      = channel;
+    cfg.bitrate_kbps = bitrate;
+    cfg.use_server   = use_server;
+    wincan_bus_t *bus = wincan_open_ex(&cfg);
     if (!bus) return 1;
 
     int rc = wincan_send(bus, &f, 500);
