@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.14)
 project(wincan VERSION 1.0.0 LANGUAGES C)
 
+# Statically link MinGW runtime so executables are self-contained
+if(MINGW)
+    add_link_options(-static)
+endif()
+
 # -------------------------------------------------------------------------
 # Library
 # -------------------------------------------------------------------------
