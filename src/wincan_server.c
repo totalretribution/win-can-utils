@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <winsock2.h>
@@ -25,6 +26,44 @@
 #define IS_VCAN(ch)  ((ch) < USB_CH_BASE)
 #define IS_USB(ch)   ((ch) >= USB_CH_BASE && (ch) < NUM_CHANNELS)
 #define USB_IDX(ch)  ((ch) - USB_CH_BASE)
+
+/* =========================================================================
+ * Logging — defaults to printf/fprintf; replaceable via
+ * wincan_server_set_logger() so service mode can route to Event Log.
+ * ====================================================================== */
+
+#define LOG_INFO  0
+#define LOG_WARN  1
+#define LOG_ERROR 2
+
+typedef void (*wincan_log_fn_t)(int level, const char *msg);
+static wincan_log_fn_t g_log_fn = NULL;
+
+void wincan_server_set_logger(wincan_log_fn_t fn)
+{
+    g_log_fn = fn;
+}
+
+static void srv_log(int level, const char *fmt, ...)
+{
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+
+    if (g_log_fn) {
+        g_log_fn(level, buf);
+    } else if (level == LOG_ERROR) {
+        fprintf(stderr, "wincan_server: %s\n", buf);
+    } else {
+        printf("wincan_server: %s\n", buf);
+    }
+}
+
+/* =========================================================================
+ * Client registry
+ * ====================================================================== */
 
 typedef struct {
     SOCKET              sock;
@@ -72,7 +111,7 @@ static wincan_bus_t *open_channel(int ch)
     wincan_config_t cfg;
     memset(&cfg, 0, sizeof(cfg));
     cfg.device_index   = g_device_index;
-    cfg.channel        = USB_IDX(ch);   /* physical channel: 0 or 1 */
+    cfg.channel        = USB_IDX(ch);
     cfg.bitrate_kbps   = g_bitrate_kbps;
     cfg.rx_buffer_size = WINCAN_DEFAULT_RX_BUFFER;
     return wincan_open(&cfg);
@@ -109,8 +148,8 @@ static void vcan_loopback(uint8_t ch, const wincan_frame_t *f)
 
 static DWORD WINAPI server_rx_thread(LPVOID param)
 {
-    int ch      = (int)(intptr_t)param;   /* protocol channel: 2 or 3 */
-    int usb_idx = USB_IDX(ch);            /* g_bus index: 0 or 1 */
+    int ch      = (int)(intptr_t)param;
+    int usb_idx = USB_IDX(ch);
     wincan_frame_t f;
     wincan_net_frame_t nf;
     SOCKET to_send[MAX_CLIENTS];
@@ -131,7 +170,7 @@ static DWORD WINAPI server_rx_thread(LPVOID param)
                 EnterCriticalSection(&g_bus_lock);
                 g_bus[usb_idx] = bus;
                 LeaveCriticalSection(&g_bus_lock);
-                printf("wincan_server: can%d connected\n", usb_idx);
+                srv_log(LOG_INFO, "can%d connected", usb_idx);
             } else {
                 Sleep(3000);
             }
@@ -143,7 +182,7 @@ static DWORD WINAPI server_rx_thread(LPVOID param)
         if (rc == WINCAN_ERR_TIMEOUT) continue;
 
         if (rc == WINCAN_ERR_IO) {
-            printf("wincan_server: can%d disconnected\n", usb_idx);
+            srv_log(LOG_WARN, "can%d disconnected", usb_idx);
             EnterCriticalSection(&g_bus_lock);
             g_bus[usb_idx] = NULL;
             LeaveCriticalSection(&g_bus_lock);
@@ -194,7 +233,7 @@ static DWORD WINAPI client_handler(LPVOID param)
             wincan_pkt_open_ack_t ack;
             int ok = 0;
             if (IS_VCAN(hdr.channel)) {
-                ok = 1;  /* vcan always available */
+                ok = 1;
             } else if (IS_USB(hdr.channel)) {
                 int usb_idx = USB_IDX(hdr.channel);
                 EnterCriticalSection(&g_bus_lock);
@@ -317,28 +356,23 @@ void wincan_server_run(int bitrate_kbps, int channels_mask, int device_index)
     }
     memset(g_bus, 0, sizeof(g_bus));
 
-    /* vcan0 and vcan1 are always available — no initialisation needed */
-    printf("wincan_server: vcan0 and vcan1 ready\n");
+    srv_log(LOG_INFO, "vcan0 and vcan1 ready");
 
-    /* Open USB channel(s) — protocol channels 2 (can0) and 3 (can1) */
     int opened = 0;
     for (int usb_idx = 0; usb_idx < 2; usb_idx++) {
         if (!(channels_mask & (1 << usb_idx))) continue;
         int ch = USB_CH_BASE + usb_idx;
         g_bus[usb_idx] = open_channel(ch);
         if (g_bus[usb_idx]) {
-            printf("wincan_server: can%d connected at %d kbps\n",
-                   usb_idx, bitrate_kbps);
+            srv_log(LOG_INFO, "can%d connected at %d kbps", usb_idx, bitrate_kbps);
             opened++;
         } else {
-            fprintf(stderr, "wincan_server: can%d not available, will retry\n",
-                    usb_idx);
+            srv_log(LOG_WARN, "can%d not available, will retry", usb_idx);
         }
     }
     if (opened == 0 && channels_mask)
-        fprintf(stderr, "wincan_server: no USB devices found at startup, waiting...\n");
+        srv_log(LOG_WARN, "no USB devices found at startup, waiting...");
 
-    /* Start USB RX/reconnect threads — pass protocol channel number */
     g_server_running = 1;
     HANDLE rx_threads[2] = {NULL, NULL};
     for (int usb_idx = 0; usb_idx < 2; usb_idx++) {
@@ -348,10 +382,9 @@ void wincan_server_run(int bitrate_kbps, int channels_mask, int device_index)
                                            (LPVOID)(intptr_t)ch, 0, NULL);
     }
 
-    /* Bind listen socket */
     SOCKET ls = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (ls == INVALID_SOCKET) {
-        fprintf(stderr, "wincan_server: socket() failed: %d\n", WSAGetLastError());
+        srv_log(LOG_ERROR, "socket() failed: %d", WSAGetLastError());
         goto cleanup;
     }
     {
@@ -365,15 +398,14 @@ void wincan_server_run(int bitrate_kbps, int channels_mask, int device_index)
         addr.sin_port        = htons(WINCAN_SERVER_PORT);
         addr.sin_addr.s_addr = inet_addr("127.0.0.1");
         if (bind(ls, (struct sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR) {
-            fprintf(stderr, "wincan_server: bind failed: %d\n", WSAGetLastError());
+            srv_log(LOG_ERROR, "bind failed: %d", WSAGetLastError());
             closesocket(ls);
             goto cleanup;
         }
     }
     listen(ls, SOMAXCONN);
-    printf("wincan_server: listening on localhost:%d\n", WINCAN_SERVER_PORT);
+    srv_log(LOG_INFO, "listening on localhost:%d", WINCAN_SERVER_PORT);
 
-    /* Accept loop */
     while (g_server_running) {
         fd_set fds;
         FD_ZERO(&fds);
@@ -405,7 +437,7 @@ void wincan_server_run(int bitrate_kbps, int channels_mask, int device_index)
                 CreateThread(NULL, 0, client_handler,
                              (LPVOID)(intptr_t)found, 0, NULL);
         } else {
-            fprintf(stderr, "wincan_server: too many clients (max %d)\n",
+            srv_log(LOG_WARN, "too many clients (max %d), connection refused",
                     MAX_CLIENTS);
             closesocket(cs);
         }
@@ -442,6 +474,8 @@ cleanup:
         wincan_close(g_bus[usb_idx]);
         g_bus[usb_idx] = NULL;
     }
+
+    srv_log(LOG_INFO, "stopped");
 
     DeleteCriticalSection(&g_bus_lock);
     DeleteCriticalSection(&g_clients_lock);
