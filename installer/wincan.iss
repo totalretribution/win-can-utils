@@ -70,7 +70,7 @@ Filename: "{app}\wincan_server.exe"; Parameters: "--uninstall"; \
 
 [Code]
 
-{ Returns true if {app} is not already in the system PATH }
+// Returns true if AppDir is not already in the system PATH
 function NeedsAddPath(AppDir: string): boolean;
 var
   Path: string;
@@ -85,7 +85,7 @@ begin
                ';' + Uppercase(Path) + ';') = 0;
 end;
 
-{ Remove {app} from system PATH on uninstall }
+// Remove AppDir from system PATH on uninstall
 procedure RemovePath(AppDir: string);
 var
   Path:    string;
