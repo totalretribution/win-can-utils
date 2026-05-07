@@ -21,9 +21,10 @@ static void usage(const char *prog)
     fprintf(stderr,
         "Usage: %s [-b bitrate] [-c can0|can1|both] [-d index]\n"
         "  -b bitrate   125, 250, 500, or 1000 kbps (default: 250)\n"
-        "  -c channel   can0, can1, or both (default: both)\n"
+        "  -c channel   USB channel: can0, can1, or both (default: both)\n"
         "  -d index     device index for multiple adapters (default: 0)\n"
         "\n"
+        "vcan0 and vcan1 are always available (no USB required).\n"
         "Listens on 127.0.0.1:29526.  Clients use --server flag.\n",
         prog);
 }
@@ -31,7 +32,7 @@ static void usage(const char *prog)
 int main(int argc, char *argv[])
 {
     int bitrate       = 250;
-    int channels_mask = 0x03; /* both channels */
+    int channels_mask = 0x03; /* both USB channels */
     int device        = 0;
 
     for (int i = 1; i < argc; i++) {
@@ -45,6 +46,7 @@ int main(int argc, char *argv[])
             if      (strcmp(ch, "can0") == 0) channels_mask = 0x01;
             else if (strcmp(ch, "can1") == 0) channels_mask = 0x02;
             else if (strcmp(ch, "both") == 0) channels_mask = 0x03;
+            else if (strcmp(ch, "none") == 0) channels_mask = 0x00;
             else { usage(argv[0]); return 1; }
         } else if (strcmp(argv[i], "-d") == 0 && i + 1 < argc) {
             device = atoi(argv[++i]);
