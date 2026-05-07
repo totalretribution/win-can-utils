@@ -89,20 +89,27 @@ end;
 procedure RemovePath(AppDir: string);
 var
   Path:    string;
-  Parts:   TArrayOfString;
   NewPath: string;
-  I:       Integer;
+  P:       Integer;
+  Entry:   string;
+  Sep:     string;
 begin
   if not RegQueryStringValue(HKEY_LOCAL_MACHINE,
       'SYSTEM\CurrentControlSet\Control\Session Manager\Environment',
       'Path', Path) then exit;
 
-  Parts := SplitString(Path, ';');
+  // Ensure trailing semicolon so every entry ends with one
+  if (Length(Path) > 0) and (Path[Length(Path)] <> ';') then
+    Path := Path + ';';
+
   NewPath := '';
-  for I := 0 to GetArrayLength(Parts) - 1 do begin
-    if Uppercase(Parts[I]) <> Uppercase(AppDir) then begin
-      if NewPath <> '' then NewPath := NewPath + ';';
-      NewPath := NewPath + Parts[I];
+  while Length(Path) > 0 do begin
+    P := Pos(';', Path);
+    Entry := Copy(Path, 1, P - 1);
+    Path  := Copy(Path, P + 1, Length(Path));
+    if Uppercase(Entry) <> Uppercase(AppDir) then begin
+      if NewPath <> '' then Sep := ';' else Sep := '';
+      NewPath := NewPath + Sep + Entry;
     end;
   end;
 
