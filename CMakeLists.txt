@@ -39,7 +39,7 @@ if(WINCAN_BUILD_SERVER)
     target_include_directories(wincan_server PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
-    target_link_libraries(wincan_server PRIVATE wincanlib ws2_32)
+    target_link_libraries(wincan_server PRIVATE wincanlib ws2_32 advapi32)
     target_compile_definitions(wincan_server PRIVATE VERSION="${WINCAN_VERSION}")
     target_compile_options(wincan_server PRIVATE -Wall -Wextra)
     set_target_properties(wincan_server PROPERTIES
