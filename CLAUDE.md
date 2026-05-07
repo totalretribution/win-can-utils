@@ -44,7 +44,7 @@ typedef enum {
 typedef struct __attribute__((packed)) {
     uint8_t  version;       // WINCAN_PROTO_VERSION
     uint8_t  type;          // wincan_pkt_type_t
-    uint8_t  channel;       // 0=can0, 1=can1
+    uint8_t  channel;       // 0=vcan0, 1=vcan1, 2=can0, 3=can1
     uint8_t  reserved;
     uint32_t payload_len;   // bytes following this header
 } wincan_pkt_hdr_t;
@@ -110,11 +110,13 @@ struct wincan_bus {
 
 ### Thread Model
 
-| Thread         | Count          | Job                                                        |
-|----------------|----------------|------------------------------------------------------------|
-| Main           | 1              | Open device, spawn RX threads, run accept loop             |
-| RX             | 1 per channel  | `wincan_recv()` loop → serialize → broadcast to all clients |
-| Client handler | 1 per connection | Read packets → `wincan_send()` or control dispatch       |
+| Thread         | Count               | Job                                                        |
+|----------------|---------------------|------------------------------------------------------------|
+| Main           | 1                   | Open device, spawn RX threads, run accept loop             |
+| RX             | 1 per USB channel   | `wincan_recv()` loop → serialize → broadcast to clients    |
+| Client handler | 1 per connection    | Read packets → USB send or vcan loopback or control        |
+
+vcan channels have no RX thread — the client handler performs the loopback inline.
 
 ### Client Registry
 
@@ -123,7 +125,7 @@ struct wincan_bus {
 
 typedef struct {
     SOCKET          sock;
-    uint8_t         subscribed[2];      // [channel] = 1 if subscribed
+    uint8_t         subscribed[4];      // [channel] = 1 if subscribed (0-3)
     wincan_filter_t filters[MAX_FILT];
     int             filter_count;
     HANDLE          thread;
@@ -142,10 +144,24 @@ CRITICAL_SECTION     g_clients_lock;
 ### Server CLI
 
 ```
-wincan_server [-b bitrate] [-c can0|can1|both] [-d device_index]
+wincan_server [-b bitrate] [-c can0|can1|both|none] [-d device_index]
 ```
 
-No host or port options — always binds `127.0.0.1:29526`.
+`-c` controls USB channels only. No host or port options — always binds `127.0.0.1:29526`.
+
+### vcan channels
+
+`vcan0` (channel 2) and `vcan1` (channel 3) are always enabled — no flag needed.
+Any frame transmitted on a vcan channel is broadcast back to all subscribers of that
+channel (including the sender), matching SocketCAN `vcan` behaviour. No USB device
+required.
+
+Tools accept `vcan0`/`vcan1` as channel names and automatically use server mode:
+```
+candump vcan0
+cangen  vcan0 -g 200
+cansend vcan0 123#DEADBEEF
+```
 
 ## Tool Changes
 

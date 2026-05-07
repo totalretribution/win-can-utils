@@ -35,7 +35,7 @@ typedef enum {
 typedef struct {
     uint8_t  version;       /* WINCAN_PROTO_VERSION                          */
     uint8_t  type;          /* wincan_pkt_type_t                             */
-    uint8_t  channel;       /* 0=can0, 1=can1                                */
+    uint8_t  channel;       /* 0=vcan0, 1=vcan1, 2=can0, 3=can1              */
     uint8_t  reserved;
     uint32_t payload_len;   /* bytes following this header                   */
 } wincan_pkt_hdr_t;

@@ -9,9 +9,9 @@
 static void usage(const char *prog)
 {
     fprintf(stderr,
-        "Usage: %s <channel> <frame> [-b bitrate] [-d index] [--server]\n"
+        "Usage: %s <channel> <frame> [-b bitrate] [-d index] [--usb]\n"
         "\n"
-        "  channel    can0 or can1\n"
+        "  channel    can0, can1, vcan0, or vcan1\n"
         "  frame      <can_id>#<data>   standard or extended CAN frame\n"
         "             <can_id>#R        RTR frame\n"
         "             <can_id>#R<dlc>   RTR frame with explicit DLC (0-8)\n"
@@ -112,8 +112,10 @@ int main(int argc, char *argv[])
     if (argc < 3) { usage(argv[0]); return 1; }
 
     int channel;
-    if      (strcmp(argv[1], "can0") == 0) channel = 0;
-    else if (strcmp(argv[1], "can1") == 0) channel = 1;
+    if      (strcmp(argv[1], "vcan0") == 0) channel = 0;
+    else if (strcmp(argv[1], "vcan1") == 0) channel = 1;
+    else if (strcmp(argv[1], "can0") == 0)  channel = 2;
+    else if (strcmp(argv[1], "can1") == 0)  channel = 3;
     else { usage(argv[0]); return 1; }
 
     int bitrate = 250, device = 0, use_server = 1;
@@ -127,10 +129,15 @@ int main(int argc, char *argv[])
     wincan_frame_t f;
     if (parse_frame(argv[2], &f) != 0) return 1;
 
+    if (channel < 2 && !use_server) {
+        fprintf(stderr, "cansend: vcan channels require server mode (drop --usb)\n");
+        return 1;
+    }
+
     wincan_config_ex_t cfg = {0};
     cfg.channel      = channel;
     cfg.bitrate_kbps = bitrate;
-    cfg.use_server   = use_server;
+    cfg.use_server   = (channel < 2) ? 1 : use_server;
     wincan_bus_t *bus = wincan_open_ex(&cfg);
     if (!bus) return 1;
 

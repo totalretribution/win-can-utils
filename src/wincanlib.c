@@ -616,7 +616,9 @@ wincan_bus_t *wincan_open_ex(const wincan_config_ex_t *cfg)
     }
 
     wincan_config_t base = {0};
-    base.channel        = cfg->channel;
+    /* Protocol channels: 0=vcan0, 1=vcan1, 2=can0, 3=can1.
+       USB device only has physical channels 0 and 1. */
+    base.channel        = (cfg->channel >= 2) ? cfg->channel - 2 : cfg->channel;
     base.bitrate_kbps   = cfg->bitrate_kbps;
     base.rx_buffer_size = (int)cfg->rx_buffer_size;
     return wincan_open(&base);
