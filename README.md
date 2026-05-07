@@ -8,6 +8,20 @@ No driver installation required — the firmware implements WCID USB descriptors
 
 ---
 
+## Installation
+
+Download `wincan-setup-vX.Y.Z.exe` from the [Releases](https://github.com/totalretribution/win-can-utils/releases) page and run it. The installer:
+
+- Copies `candump`, `cangen`, `cansend`, and `wincan_server` to `Program Files\WinCAN`
+- Adds the install directory to the system `PATH` (tools available in any terminal)
+- Optionally installs `wincan_server` as a Windows Service that starts automatically on boot
+
+Administrator rights are required. No reboot needed.
+
+To build from source instead, see [Build](#build) below.
+
+---
+
 ## Server
 
 `wincan_server` owns the USB device and lets multiple clients connect over TCP on `127.0.0.1:29526`. Tools default to server mode; pass `--usb` to access the device directly (single process only).
@@ -140,8 +154,8 @@ All tools default to server mode. Pass `--usb` to bypass the server and access t
 cmake -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 
-# Library + CLI tools
-cmake -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DWINCAN_BUILD_TOOLS=ON
+# Library + CLI tools + server
+cmake -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DWINCAN_BUILD_TOOLS=ON -DWINCAN_BUILD_SERVER=ON
 cmake --build build
 
 # Library + examples
@@ -189,6 +203,8 @@ wincan_server --uninstall
 ```
 
 The service is named `WinCANServer` and can also be managed via `services.msc` or `sc`.
+
+Service status, warnings, and errors are written to **Windows Logs → Application** in Event Viewer, source `WinCANServer`. The service automatically restarts on crash (1 s → 5 s → 30 s backoff).
 
 ---
 
