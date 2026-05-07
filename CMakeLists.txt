@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.14)
 project(wincan VERSION 1.0.0 LANGUAGES C)
 
+# Statically link MinGW runtime so executables are self-contained
+if(MINGW)
+    add_link_options(-static)
+endif()
+
 # -------------------------------------------------------------------------
 # Library
 # -------------------------------------------------------------------------
@@ -39,7 +44,7 @@ if(WINCAN_BUILD_SERVER)
     target_include_directories(wincan_server PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
-    target_link_libraries(wincan_server PRIVATE wincanlib ws2_32)
+    target_link_libraries(wincan_server PRIVATE wincanlib ws2_32 advapi32)
     target_compile_definitions(wincan_server PRIVATE VERSION="${WINCAN_VERSION}")
     target_compile_options(wincan_server PRIVATE -Wall -Wextra)
     set_target_properties(wincan_server PROPERTIES

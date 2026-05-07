@@ -169,6 +169,27 @@ wincan_server [-b bitrate] [-c can0|can1|both|none] [-d index]
 
 `vcan0` and `vcan1` are always enabled. `-c none` runs the server with virtual channels only.
 
+#### Windows Service (optional)
+
+Install `wincan_server` as a Windows Service so it starts automatically on boot. Tools can then connect without manually running the server.
+
+**Requires administrator.** The service runs as `LocalSystem`, which has the device access needed for WinUSB.
+
+```sh
+# Install (saves bitrate/channel/device config into the service)
+wincan_server --install
+wincan_server --install -b 500 -c can0
+
+# Control
+wincan_server --start
+wincan_server --stop
+
+# Remove
+wincan_server --uninstall
+```
+
+The service is named `WinCANServer` and can also be managed via `services.msc` or `sc`.
+
 ---
 
 ### candump
