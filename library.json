@@ -1,0 +1,19 @@
+{
+  "name": "wincan",
+  "version": "1.0.0",
+  "description": "Windows host-side library for candleLight USB CAN adapters (WinUSB). Supports direct USB and multi-client TCP server mode.",
+  "keywords": ["can", "canbus", "winusb", "candlelight", "windows"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/totalretribution/win-can-utils.git"
+  },
+  "platforms": ["native"],
+  "build": {
+    "srcFilter": "+<src/wincanlib.c> +<src/wincan_net.c> +<src/wincan_proto.c>",
+    "includeDir": "include",
+    "flags": ["-lwinusb", "-lsetupapi", "-lws2_32"]
+  },
+  "export": {
+    "exclude": ["tools", "installer", ".github"]
+  }
+}
