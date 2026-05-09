@@ -11,7 +11,7 @@
   "build": {
     "srcFilter": "+<src/wincanlib.c> +<src/wincan_net.c> +<src/wincan_proto.c>",
     "includeDir": "include",
-    "flags": ["-lwinusb", "-lsetupapi", "-lws2_32"]
+    "extraScript": "library_extra_script.py"
   },
   "export": {
     "exclude": ["tools", "installer", ".github"]
