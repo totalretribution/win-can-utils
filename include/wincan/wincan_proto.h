@@ -1,6 +1,8 @@
 #ifndef WINCAN_PROTO_H
 #define WINCAN_PROTO_H
 
+#ifdef _WIN32
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -116,4 +118,5 @@ void wincan_frame_from_net(const wincan_net_frame_t *src, wincan_frame_t *dst);
 }
 #endif
 
+#endif /* _WIN32 */
 #endif /* WINCAN_PROTO_H */

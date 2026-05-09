@@ -1,3 +1,4 @@
+#ifdef _WIN32
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -762,3 +763,5 @@ const char *wincan_strerror(int err)
         default:                  return "unknown error";
     }
 }
+
+#endif /* _WIN32 */
