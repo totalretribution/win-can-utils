@@ -1,3 +1,4 @@
+#ifdef _WIN32
 #include <string.h>
 #include <winsock2.h>
 #include "wincan/wincan.h"
@@ -109,3 +110,5 @@ void wincan_frame_from_net(const wincan_net_frame_t *src, wincan_frame_t *dst)
     dst->ext = (src->flags & WINCAN_FRAME_EFF) ? 1 : 0;
     memcpy(dst->data, src->data, 8);
 }
+
+#endif /* _WIN32 */

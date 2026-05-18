@@ -1,6 +1,8 @@
 #ifndef WINCAN_INTERNAL_H
 #define WINCAN_INTERNAL_H
 
+#ifdef _WIN32
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -96,4 +98,5 @@ int           wincan_net_set_filters(wincan_bus_t *bus,
 }
 #endif
 
+#endif /* _WIN32 */
 #endif /* WINCAN_INTERNAL_H */

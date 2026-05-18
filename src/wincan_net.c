@@ -1,3 +1,4 @@
+#ifdef _WIN32
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -230,3 +231,5 @@ void wincan_net_close(wincan_bus_t *bus)
 
     free(bus);
 }
+
+#endif /* _WIN32 */
