@@ -206,6 +206,18 @@ The service is named `WinCANServer` and can also be managed via `services.msc` o
 
 Service status, warnings, and errors are written to **Windows Logs → Application** in Event Viewer, source `WinCANServer`. The service automatically restarts on crash (1 s → 5 s → 30 s backoff).
 
+#### Connecting from WSL or a remote host
+
+By default tools connect to `127.0.0.1:29526`. Set `WINCAN_HOST` to point at a different host:
+
+```sh
+# WSL — reach wincan_server running on the Windows host
+export WINCAN_HOST=host.docker.internal
+candump can0
+```
+
+`WINCAN_HOST` accepts any hostname or IP address. The port is always `29526` and cannot be changed via this variable.
+
 ---
 
 ### candump
