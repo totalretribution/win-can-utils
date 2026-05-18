@@ -61,21 +61,36 @@ wincan_bus_t *wincan_net_open(uint8_t channel, uint32_t bitrate_kbps,
     DWORD snd_to = 2000;
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char *)&snd_to, sizeof(snd_to));
 
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family      = AF_INET;
-    addr.sin_port        = htons(WINCAN_SERVER_PORT);
-    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    const char *host = getenv("WINCAN_HOST");
+    if (!host || host[0] == '\0')
+        host = "127.0.0.1";
 
-    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) == SOCKET_ERROR) {
-        int err = WSAGetLastError();
-        if (err == WSAECONNREFUSED)
-            fprintf(stderr, "wincan_net: server not running\n");
-        else
-            fprintf(stderr, "wincan_net: cannot connect to server (error %d)\n", err);
+    char port_str[8];
+    snprintf(port_str, sizeof(port_str), "%u", (unsigned)WINCAN_SERVER_PORT);
+
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family   = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    int gai = getaddrinfo(host, port_str, &hints, &res);
+    if (gai != 0) {
+        fprintf(stderr, "wincan_net: cannot resolve '%s': %s\n", host, gai_strerror(gai));
         closesocket(sock);
         return NULL;
     }
+
+    if (connect(sock, res->ai_addr, (int)res->ai_addrlen) == SOCKET_ERROR) {
+        int err = WSAGetLastError();
+        if (err == WSAECONNREFUSED)
+            fprintf(stderr, "wincan_net: server not running at %s\n", host);
+        else
+            fprintf(stderr, "wincan_net: cannot connect to %s (error %d)\n", host, err);
+        freeaddrinfo(res);
+        closesocket(sock);
+        return NULL;
+    }
+    freeaddrinfo(res);
 
     /* Send OPEN */
     wincan_pkt_open_t open_pkt;

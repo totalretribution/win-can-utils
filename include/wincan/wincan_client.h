@@ -12,6 +12,7 @@ extern "C" {
  *
  * use_server = 0: open USB device directly (same as wincan_open)
  * use_server = 1: connect to wincan_server at 127.0.0.1:29526
+ *               override host via WINCAN_HOST env var (e.g. host.docker.internal)
  *
  * When use_server = 0, device_index is ignored (defaults to 0).
  * Use wincan_open() directly if you need a specific device index.
